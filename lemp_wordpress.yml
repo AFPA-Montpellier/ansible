@@ -1,0 +1,213 @@
+---
+- name: Full LEMP + WordPress setup on ManagedNode
+  hosts: managed
+  become: yes
+  gather_facts: false
+
+  vars:
+    wp_db_name: ben_db
+    wp_db_user: ben
+    wp_db_password: "P@ssw0rd45!"
+    wp_site_dir: /var/www/wordpress
+    wp_download_url: https://wordpress.org/latest.tar.gz
+    php_fpm_version: "8.2"
+
+  tasks:
+    - name: Update APT cache and upgrade system
+      ansible.builtin.apt:
+        update_cache: yes
+        upgrade: full
+        autoremove: yes
+
+    - name: Install base packages for LEMP
+      ansible.builtin.apt:
+        name:
+          - nginx
+          - mariadb-server
+          - php-fpm
+          - php-mysql
+          - php-cli
+          - php-curl
+          - php-gd
+          - php-xml
+          - php-mbstring
+          - php-zip
+          - python3-pymysql
+          - curl
+        state: present
+
+    - name: Ensure Nginx is enabled and running
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Ensure MariaDB is enabled and running
+      ansible.builtin.service:
+        name: mariadb
+        state: started
+        enabled: yes
+
+    # ---------- MariaDB / WordPress DB ----------
+
+    - name: Create WordPress database
+      community.mysql.mysql_db:
+        name: "{{ wp_db_name }}"
+        state: present
+        login_unix_socket: /run/mysqld/mysqld.sock
+
+    - name: Create WordPress database user
+      community.mysql.mysql_user:
+        name: "{{ wp_db_user }}"
+        password: "{{ wp_db_password }}"
+        priv: "{{ wp_db_name }}.*:ALL"
+        host: "%"
+        state: present
+        login_unix_socket: /run/mysqld/mysqld.sock
+
+    # ---------- WordPress files ----------
+
+    - name: Create WordPress directory
+      ansible.builtin.file:
+        path: "{{ wp_site_dir }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
+    - name: Download latest WordPress archive
+      ansible.builtin.get_url:
+        url: "{{ wp_download_url }}"
+        dest: /tmp/wordpress.tar.gz
+        mode: "0644"
+
+    - name: Extract WordPress archive
+      ansible.builtin.unarchive:
+        src: /tmp/wordpress.tar.gz
+        dest: /tmp
+        remote_src: yes
+
+    - name: Copy WordPress files to target directory
+      ansible.builtin.command:
+        cmd: rsync -a /tmp/wordpress/ "{{ wp_site_dir }}/"
+      args:
+        creates: "{{ wp_site_dir }}/wp-settings.php"
+
+    - name: Ensure correct ownership for WordPress directory
+      ansible.builtin.file:
+        path: "{{ wp_site_dir }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        recurse: yes
+
+    # ---------- WordPress wp-config.php ----------
+
+    - name: Create wp-config.php from sample if not exists
+      ansible.builtin.copy:
+        src: "{{ wp_site_dir }}/wp-config-sample.php"
+        dest: "{{ wp_site_dir }}/wp-config.php"
+        remote_src: yes
+      args:
+        force: no
+
+    - name: Set DB_NAME in wp-config.php
+      ansible.builtin.lineinfile:
+        path: "{{ wp_site_dir }}/wp-config.php"
+        regexp: "^define\\( 'DB_NAME',"
+        line: "define( 'DB_NAME', '{{ wp_db_name }}' );"
+
+    - name: Set DB_USER in wp-config.php
+      ansible.builtin.lineinfile:
+        path: "{{ wp_site_dir }}/wp-config.php"
+        regexp: "^define\\( 'DB_USER',"
+        line: "define( 'DB_USER', '{{ wp_db_user }}' );"
+
+    - name: Set DB_PASSWORD in wp-config.php
+      ansible.builtin.lineinfile:
+        path: "{{ wp_site_dir }}/wp-config.php"
+        regexp: "^define\\( 'DB_PASSWORD',"
+        line: "define( 'DB_PASSWORD', '{{ wp_db_password }}' );"
+
+    # ---------- Nginx virtual host ----------
+
+    - name: Create Nginx server block for WordPress
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/wordpress.conf
+        content: |
+          server {
+              listen 80;
+              server_name _;
+
+              root {{ wp_site_dir }};
+              index index.php index.html index.htm;
+
+              location / {
+                  try_files $uri $uri/ /index.php?$args;
+              }
+
+              location ~ \.php$ {
+                  include snippets/fastcgi-php.conf;
+                  fastcgi_pass unix:/run/php/php{{ php_fpm_version }}-fpm.sock;
+              }
+
+              location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+                  try_files $uri $uri/ @fallback;
+                  expires max;
+                  log_not_found off;
+              }
+
+              location @fallback {
+                  rewrite ^ /index.php?$args;
+              }
+          }
+
+    - name: Disable default Nginx site if present
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Enable WordPress Nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/wordpress.conf
+        dest: /etc/nginx/sites-enabled/wordpress.conf
+        state: link
+        force: yes
+
+    - name: Test Nginx configuration
+      ansible.builtin.command: nginx -t
+      register: nginx_test
+      changed_when: false
+      failed_when: nginx_test.rc != 0
+
+    - name: Reload Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+
+    # ---------- UFW firewall (optional but included) ----------
+
+    - name: Install UFW
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+
+    - name: Allow SSH port 22105/tcp
+      ansible.builtin.ufw:
+        rule: allow
+        port: "22105"
+        proto: tcp
+
+    - name: Allow HTTP and HTTPS
+      ansible.builtin.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - "80"
+        - "443"
+
+    - name: Enable UFW
+      ansible.builtin.ufw:
+        state: enabled
+        policy: deny
