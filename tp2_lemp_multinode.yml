@@ -1,0 +1,335 @@
+---
+- name: Setup MariaDB on DB server
+  hosts: db
+  become: true
+
+  vars:
+    mariadb_packages:
+      - mariadb-server
+      - mariadb-client
+      - python3-pymysql                  # Python driver for MySQL/MariaDB
+    wp_db_name: ben_wp                    # Database name for WordPress
+    wp_db_user: ben_wp                    # Database user for WordPress
+    wp_db_password: "P@ssw0rd45!"         # Strong password for WordPress DB user
+    db_bind_address: "172.20.100.107"     # DB server IP address to bind mysqld
+
+  tasks:
+    - name: Ensure APT cache is updated (DB)
+      ansible.builtin.apt:
+        update_cache: yes
+      tags: db, apt
+      # This task refreshes package metadata on the DB server
+
+    - name: Install MariaDB packages
+      ansible.builtin.apt:
+        name: "{{ mariadb_packages }}"
+        state: present
+      tags: db, mariadb
+      # This task installs MariaDB server, client and Python driver on DB server
+
+    - name: Ensure MariaDB service is enabled and running
+      ansible.builtin.service:
+        name: mariadb
+        state: started
+        enabled: yes
+      when: not ansible_check_mode
+      tags: db, mariadb, service
+      # This task makes sure MariaDB service is enabled at boot and running
+
+    - name: Configure MariaDB bind-address to listen on DB server IP
+      ansible.builtin.lineinfile:
+        path: /etc/mysql/mariadb.conf.d/50-server.cnf
+        regexp: '^bind-address'
+        line: "bind-address            = {{ db_bind_address }}"
+        backup: yes
+      notify: Restart MariaDB
+      tags: db, mariadb, config
+      # This task ensures MariaDB listens on the DB server IP so the web server can connect
+
+    - name: Ensure WordPress database exists
+      community.mysql.mysql_db:
+        name: "{{ wp_db_name }}"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      tags: db, mariadb, wordpress
+      # This task creates the WordPress database if it does not exist
+
+    - name: Ensure WordPress DB user exists with proper privileges
+      community.mysql.mysql_user:
+        name: "{{ wp_db_user }}"
+        password: "{{ wp_db_password }}"
+        priv: "{{ wp_db_name }}.*:ALL"
+        host: "172.20.100.108"           # Only the webserver IP is allowed
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+      tags: db, mariadb, wordpress
+      # This task creates the WordPress DB user restricted to the webserver IP
+      # It grants full privileges only on the ben_wp.* tables
+
+    - name: Ensure UFW is installed on DB server
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+      tags: db, ufw
+      # This task installs UFW firewall on the DB server
+
+    - name: Set UFW default deny incoming on DB server
+      ansible.builtin.command: ufw default deny incoming
+      tags: db, ufw
+      # This task enforces default policy to deny all incoming traffic on DB server
+
+    - name: Set UFW default allow outgoing on DB server
+      ansible.builtin.command: ufw default allow outgoing
+      tags: db, ufw
+      # This task allows all outgoing traffic from DB server
+
+    - name: Allow SSH port on DB server (22107/tcp)
+      ansible.builtin.command: ufw allow 22107/tcp
+      tags: db, ufw, ssh
+      # This task allows SSH access on custom port 22107 for remote administration
+
+    - name: Allow MySQL from web server only (3306/tcp)
+      ansible.builtin.command: ufw allow from 172.20.100.108 to any port 3306 proto tcp
+      tags: db, ufw, mysql
+      # This task allows MySQL access only from the web server IP
+
+    - name: Enable UFW on DB server
+      ansible.builtin.command: ufw --force enable
+      tags: db, ufw
+      # This task enables UFW firewall non-interactively on the DB server
+
+  handlers:
+    - name: Restart MariaDB
+      ansible.builtin.service:
+        name: mariadb
+        state: restarted
+      # This handler restarts MariaDB when its configuration changes
+
+# ---------------------------------------------------------------------------
+
+- name: Setup Web + PHP + WordPress on Web server
+  hosts: web
+  become: true
+
+  vars:
+    web_packages:
+      - nginx
+      - php-fpm
+      - php-mysql
+      - php-xml
+      - php-cli
+      - php-curl
+      - php-zip
+    wp_root: /var/www/wordpress           # Document root for WordPress
+    wp_download_url: https://wordpress.org/latest.tar.gz
+    wp_archive_path: /tmp/wordpress.tar.gz
+    wp_db_name: ben_wp                    # Must match DB play
+    wp_db_user: ben_wp
+    wp_db_password: "P@ssw0rd45!"
+    wp_db_host: "172.20.100.107"          # DB server IP
+    nginx_site_path: /etc/nginx/sites-available/wordpress
+    nginx_site_link: /etc/nginx/sites-enabled/wordpress
+    php_fpm_sock: /run/php/php8.2-fpm.sock  # PHP-FPM socket on Debian 12
+
+  tasks:
+    - name: Ensure APT cache is updated (WEB)
+      ansible.builtin.apt:
+        update_cache: yes
+      tags: web, apt
+      # This task refreshes package metadata on the Web server
+
+    - name: Install web packages (Nginx + PHP)
+      ansible.builtin.apt:
+        name: "{{ web_packages }}"
+        state: present
+      tags: web, nginx, php
+      # This task installs Nginx, PHP-FPM and required PHP extensions
+
+    - name: Ensure Nginx is enabled and running
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: yes
+      tags: web, nginx, service
+      # This task ensures Nginx service is enabled and running
+
+    - name: Ensure PHP-FPM is enabled and running
+      ansible.builtin.service:
+        name: php8.2-fpm
+        state: started
+        enabled: yes
+      tags: web, php, service
+      # This task ensures PHP-FPM service is enabled and running
+      # Note: Adjust service name if PHP version changes
+
+    - name: Create WordPress document root directory
+      ansible.builtin.file:
+        path: "{{ wp_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+      tags: web, wordpress
+      # This task creates the directory where WordPress files will live
+
+    - name: Download latest WordPress archive
+      ansible.builtin.get_url:
+        url: "{{ wp_download_url }}"
+        dest: "{{ wp_archive_path }}"
+        mode: '0644'
+      tags: web, wordpress, download
+      # This task downloads the latest WordPress tarball to /tmp
+
+    - name: Extract WordPress archive into document root
+      ansible.builtin.unarchive:
+        src: "{{ wp_archive_path }}"
+        dest: /var/www
+        remote_src: true
+        creates: "{{ wp_root }}/wp-config-sample.php"
+      tags: web, wordpress, extract
+      # This task extracts WordPress into /var/www/wordpress
+      # The 'creates' parameter ensures it is not extracted twice
+
+    - name: Set ownership and permissions on WordPress directory
+      ansible.builtin.file:
+        path: "{{ wp_root }}"
+        state: directory
+        recurse: true
+        owner: www-data
+        group: www-data
+        mode: '0755'
+      tags: web, wordpress, permissions
+      # This task ensures WordPress files are owned by www-data
+
+    - name: Create wp-config.php for WordPress
+      ansible.builtin.copy:
+        dest: "{{ wp_root }}/wp-config.php"
+        owner: www-data
+        group: www-data
+        mode: '0640'
+        content: |
+          <?php
+          // WordPress base configuration file generated by Ansible
+
+          define( 'DB_NAME', '{{ wp_db_name }}' );
+          define( 'DB_USER', '{{ wp_db_user }}' );
+          define( 'DB_PASSWORD', '{{ wp_db_password }}' );
+          define( 'DB_HOST', '{{ wp_db_host }}' );
+          define( 'DB_CHARSET', 'utf8' );
+          define( 'DB_COLLATE', '' );
+
+          $table_prefix = 'wp_';
+
+          define( 'WP_DEBUG', false );
+
+          if ( ! defined( 'ABSPATH' ) ) {
+            define( 'ABSPATH', __DIR__ . '/' );
+          }
+
+          require_once ABSPATH . 'wp-settings.php';
+      tags: web, wordpress, config
+      # This task creates a basic wp-config.php using Ansible variables
+      # Note: In production, you should also manage secret keys and salts
+
+    - name: Deploy Nginx site configuration for WordPress
+      ansible.builtin.copy:
+        dest: "{{ nginx_site_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          server {
+              listen 80;
+              server_name _;
+
+              root {{ wp_root }};
+              index index.php index.html index.htm;
+
+              location / {
+                  try_files $uri $uri/ /index.php?$args;
+              }
+
+              location ~ \.php$ {
+                  include snippets/fastcgi-php.conf;
+                  fastcgi_pass unix:{{ php_fpm_sock }};
+              }
+
+              location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+                  try_files $uri $uri/ @fallback;
+                  expires max;
+                  log_not_found off;
+              }
+
+              location @fallback {
+                  rewrite ^/(.*)$ /index.php?$args last;
+              }
+          }
+      tags: web, nginx, wordpress
+      # This task deploys an Nginx virtual host for the WordPress site
+
+    - name: Disable default Nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      tags: web, nginx
+      # This task removes the default Nginx site to avoid conflicts
+
+    - name: Enable WordPress Nginx site
+      ansible.builtin.file:
+        src: "{{ nginx_site_path }}"
+        dest: "{{ nginx_site_link }}"
+        state: link
+      tags: web, nginx, wordpress
+      # This task enables the WordPress Nginx site by creating a symlink
+
+    - name: Test Nginx configuration
+      ansible.builtin.command: nginx -t
+      register: nginx_test
+      changed_when: false
+      tags: web, nginx
+      # This task tests Nginx configuration syntax without applying changes
+
+    - name: Reload Nginx if configuration is valid
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+      when: nginx_test.rc == 0
+      tags: web, nginx
+      # This task reloads Nginx only if the configuration test passed
+
+    - name: Ensure UFW is installed on Web server
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+      tags: web, ufw
+      # This task installs UFW firewall on the Web server
+
+    - name: Set UFW default deny incoming on Web server
+      ansible.builtin.command: ufw default deny incoming
+      tags: web, ufw
+      # This task enforces default policy to deny all incoming traffic on Web server
+
+    - name: Set UFW default allow outgoing on Web server
+      ansible.builtin.command: ufw default allow outgoing
+      tags: web, ufw
+      # This task allows all outgoing traffic from Web server
+
+    - name: Allow SSH port on Web server (22108/tcp)
+      ansible.builtin.command: ufw allow 22108/tcp
+      tags: web, ufw, ssh
+      # This task allows SSH access on custom port 22108 for remote administration
+
+    - name: Allow HTTP (80/tcp) on Web server
+      ansible.builtin.command: ufw allow 80/tcp
+      tags: web, ufw, http
+      # This task allows HTTP traffic on port 80
+
+    - name: Allow HTTPS (443/tcp) on Web server
+      ansible.builtin.command: ufw allow 443/tcp
+      tags: web, ufw, https
+      # This task allows HTTPS traffic on port 443
+
+    - name: Enable UFW on Web server
+      ansible.builtin.command: ufw --force enable
+      tags: web, ufw
+      # This task enables UFW firewall non-interactively on the Web server

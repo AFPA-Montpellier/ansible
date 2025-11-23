@@ -1,0 +1,17 @@
+[db]
+dbserver ansible_host=172.20.100.107 ansible_port=22107
+
+[web]
+webserver ansible_host=172.20.100.108 ansible_port=22108
+
+#VM TP 01
+[legacy]
+ManagedNode ansible_host=172.20.100.105 ansible_port=22105
+
+[db:vars]
+ansible_user=ben
+ansible_python_interpreter=/usr/bin/python3
+
+[web:vars]
+ansible_user=ben
+ansible_python_interpreter=/usr/bin/python3
