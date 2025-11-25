@@ -1,0 +1,4 @@
+---
+# Group variables for DB servers (group: db)
+
+webserver_ip: "172.20.100.108"  # IP address of the Web server allowed to access DB

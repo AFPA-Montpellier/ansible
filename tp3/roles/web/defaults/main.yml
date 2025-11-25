@@ -1,0 +1,12 @@
+---
+# Default variables for role: web
+
+wp_root: /var/www/wordpress          # Document root for WordPress
+wp_download_url: https://wordpress.org/latest.tar.gz
+wp_archive_path: /tmp/wordpress.tar.gz
+
+nginx_site_path: /etc/nginx/sites-available/wordpress
+nginx_site_link: /etc/nginx/sites-enabled/wordpress
+
+php_fpm_service: php8.2-fpm          # PHP-FPM service name on Debian 12
+php_fpm_sock: /run/php/php8.2-fpm.sock

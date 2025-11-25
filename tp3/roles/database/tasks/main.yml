@@ -1,0 +1,71 @@
+---
+# ========================================
+# Role: database
+# MariaDB installation & WordPress DB setup
+# ========================================
+
+# Install MariaDB + Python driver
+- name: Install MariaDB packages
+  ansible.builtin.apt:
+    name:
+      - mariadb-server
+      - mariadb-client
+      - python3-pymysql
+    state: present
+  tags: db, mariadb
+  # Required for MySQL/MariaDB and for Ansible modules to work
+
+# Ensure MariaDB service is enabled & running
+- name: Ensure MariaDB service is running
+  ansible.builtin.service:
+    name: mariadb
+    state: started
+    enabled: yes
+  when: not ansible_check_mode
+  tags: db, mariadb
+  # The DB server must be active before creating DB/user
+
+# Create WordPress database
+- name: Create WordPress database
+  community.mysql.mysql_db:
+    name: "{{ wp_db_name }}"
+    state: present
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+  tags: db, wordpress
+  # Creates DB if it does not already exist
+
+# Create WordPress DB user
+- name: Create WordPress DB user
+  community.mysql.mysql_user:
+    name: "{{ wp_db_user }}"
+    password: "{{ wp_db_password }}"
+    host: "{{ webserver_ip }}"
+    priv: "{{ wp_db_name }}.*:ALL"
+    state: present
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+  tags: db, wordpress
+  # Creates user and grants permission only from WEB server
+
+# Harden MariaDB installation (simulate secure installation)
+- name: Remove anonymous MySQL users
+  community.mysql.mysql_user:
+    name: ''
+    host_all: true
+    state: absent
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+  tags: db, security
+
+- name: Remove test database
+  community.mysql.mysql_db:
+    name: test
+    state: absent
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+  tags: db, security
+
+- name: Disallow remote root login
+  community.mysql.mysql_user:
+    name: root
+    host: "%"
+    state: absent
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+  tags: db, security

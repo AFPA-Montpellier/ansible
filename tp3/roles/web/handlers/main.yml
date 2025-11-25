@@ -1,0 +1,18 @@
+---
+# Handlers for role: web
+# These are triggered by tasks via `notify: Reload Nginx`
+
+- name: Test Nginx configuration
+  ansible.builtin.command: nginx -t
+  register: nginx_test
+  changed_when: false
+  listen: "Reload Nginx"
+  # Validates Nginx configuration syntax before reloading the service
+
+- name: Reload Nginx service
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+  when: nginx_test.rc == 0
+  listen: "Reload Nginx"
+  # Reloads Nginx only if the configuration test passed successfully

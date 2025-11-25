@@ -1,0 +1,14 @@
+---
+- name: Apply common + database roles to DB server
+  hosts: db
+  become: true
+  roles:
+    - common
+    - database
+
+- name: Apply common + web roles to Web server
+  hosts: web
+  become: true
+  roles:
+    - common
+    - web

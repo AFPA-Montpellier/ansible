@@ -1,0 +1,141 @@
+---
+# ========================================
+# Role: web
+# Nginx + PHP-FPM + WordPress frontend
+# ========================================
+
+# 1) Install web packages: Nginx + PHP + extensions
+- name: Install web packages (Nginx + PHP)
+  ansible.builtin.apt:
+    name:
+      - nginx
+      - php-fpm
+      - php-mysql
+      - php-xml
+      - php-cli
+      - php-curl
+      - php-zip
+    state: present
+  tags: web, nginx, php
+  # Installs required packages for running WordPress with PHP-FPM
+
+# 2) Ensure Nginx is enabled and running
+- name: Ensure Nginx is enabled and running
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: yes
+  when: not ansible_check_mode
+  tags: web, nginx, service
+  # Makes sure Nginx is started and enabled at boot
+
+# 3) Ensure PHP-FPM is enabled and running
+- name: Ensure PHP-FPM is enabled and running
+  ansible.builtin.service:
+    name: "{{ php_fpm_service }}"
+    state: started
+    enabled: yes
+  when: not ansible_check_mode
+  tags: web, php, service
+  # Ensures PHP-FPM service is active
+
+# 4) Create WordPress document root directory
+- name: Create WordPress document root directory
+  ansible.builtin.file:
+    path: "{{ wp_root }}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+  tags: web, wordpress
+  # Creates the directory where WordPress files will live
+
+# 5) Download latest WordPress archive
+- name: Download latest WordPress archive
+  ansible.builtin.get_url:
+    url: "{{ wp_download_url }}"
+    dest: "{{ wp_archive_path }}"
+    mode: '0644'
+  tags: web, wordpress, download
+  # Downloads the latest WordPress tarball to /tmp
+
+# 6) Extract WordPress archive into document root
+- name: Extract WordPress archive into document root
+  ansible.builtin.unarchive:
+    src: "{{ wp_archive_path }}"
+    dest: /var/www
+    remote_src: true
+    creates: "{{ wp_root }}/wp-config-sample.php"
+  tags: web, wordpress, extract
+  # Extracts WordPress into /var/www/wordpress, only once (idempotent)
+
+# 7) Set correct ownership on WordPress directory
+- name: Set ownership and permissions on WordPress directory
+  ansible.builtin.file:
+    path: "{{ wp_root }}"
+    state: directory
+    recurse: true
+    owner: www-data
+    group: www-data
+    mode: '0755'
+  tags: web, wordpress, permissions
+  # Ensures WordPress files are owned by the web server user
+
+# 8) Deploy wp-config.php from template
+- name: Deploy wp-config.php from template
+  ansible.builtin.template:
+    src: wp-config.php.j2
+    dest: "{{ wp_root }}/wp-config.php"
+    owner: www-data
+    group: www-data
+    mode: '0640'
+  tags: web, wordpress, config
+  # Generates wp-config.php using Ansible variables and Jinja2 template
+
+# 9) Deploy Nginx site configuration for WordPress
+- name: Deploy Nginx site configuration for WordPress
+  ansible.builtin.template:
+    src: wordpress_nginx.conf.j2
+    dest: "{{ nginx_site_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload Nginx
+  tags: web, nginx, wordpress
+  # Deploys an Nginx virtual host file for the WordPress site
+  # Notifies handler to reload Nginx when configuration changes
+
+# 10) Disable default Nginx site
+- name: Disable default Nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload Nginx
+  tags: web, nginx
+  # Removes the default Nginx site to avoid conflicts
+  # Reload is triggered if this changes anything
+
+# 11) Enable WordPress Nginx site
+- name: Enable WordPress Nginx site
+  ansible.builtin.file:
+    src: "{{ nginx_site_path }}"
+    dest: "{{ nginx_site_link }}"
+    state: link
+  notify: Reload Nginx
+  tags: web, nginx, wordpress
+  # Enables the WordPress site by creating a symlink in sites-enabled
+  # Any change here will also trigger a Nginx reload
+
+# 12) Allow SSH, HTTP and HTTPS via UFW on Web server
+- name: Allow SSH, HTTP and HTTPS via UFW on Web server
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "22108"
+    - "80"
+    - "443"
+  when: not ansible_check_mode
+  tags: web, ufw, firewall
+  # Opens SSH (22108), HTTP (80) and HTTPS (443) on the Web server firewall

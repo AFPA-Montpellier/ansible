@@ -1,0 +1,9 @@
+---
+# Global variables for all hosts (DB + Web)
+
+wp_db_name: ben_wp
+wp_db_user: ben_wp
+wp_db_password: "P@ssw0rd45!"
+
+# DB server address seen from the web server
+wp_db_host: "172.20.100.107"

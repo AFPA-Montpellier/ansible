@@ -1,0 +1,54 @@
+---
+# ============================
+# Role: common
+# General configuration for all servers (DB + Web)
+# ============================
+
+# 1) Update APT cache
+- name: Update APT cache
+  ansible.builtin.apt:
+    update_cache: yes
+  tags: common, apt
+  # Ensures package lists are fresh on every server
+
+# 2) Upgrade system packages
+- name: Upgrade system packages
+  ansible.builtin.apt:
+    upgrade: yes
+  tags: common, apt
+  # Applies available updates (safe upgrade)
+
+# 3) Install essential tools
+- name: Install base packages for all servers
+  ansible.builtin.apt:
+    name:
+      - curl
+      - unzip
+      - vim
+      - git
+      - ufw
+    state: present
+  tags: common, packages
+  # Useful utilities for all machines
+
+# 4) Set timezone to Europe/Paris
+- name: Set system timezone
+  ansible.builtin.timezone:
+    name: Europe/Paris
+  tags: common, timezone
+  # Ensures consistent time settings across all servers
+
+# 5) Enable UFW
+- name: Ensure UFW is enabled
+  community.general.ufw:
+    state: enabled
+  when: not ansible_check_mode
+  tags: common, ufw
+  # Firewall must be active for better security
+
+# 6) Enable UFW logging
+- name: Enable UFW logging
+  community.general.ufw:
+    logging: on
+  tags: common, ufw
+  # Helps with debugging firewall issues
