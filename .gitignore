@@ -1,0 +1,44 @@
+# ============================
+# Ansible TP - SafeguardTech
+# Professional .gitignore
+# ============================
+
+# --- SSH keys (never commit!)
+*.pem
+*.key
+*.pub
+*id_rsa*
+*id_ed25519*
+
+# --- Sensitive data
+vault_pass.txt
+*.vault
+*.secret
+
+# --- Python / Ansible cache
+__pycache__/
+*.pyc
+*.pyo
+*.retry
+*.log
+
+# --- Virtual environments
+.env/
+.venv/
+venv/
+
+# --- Local editor / IDE configs
+.idea/
+.vscode/
+*.swp
+
+# --- Temporary files
+*.tmp
+*.bak
+*~
+.DS_Store
+
+# --- Ansible-specific
+facts/
+ansible_facts/
+*.retry
