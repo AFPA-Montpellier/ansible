@@ -75,3 +75,36 @@ A fully functional **LEMP stack distributed between two servers**, with correct 
 
 This TP converts TP2 into a production-quality role-based architecture using:
 
+
+Each role is responsible for a specific layer of the infrastructure:
+
+- `common` → base system preparation for all servers  
+- `database` → MariaDB installation and WordPress database provisioning  
+- `web` → Nginx, PHP-FPM, WordPress deployment and configuration  
+
+The orchestration is handled by `site.yml`, which applies:
+
+- `common + database` on the DB server  
+- `common + web` on the Web server  
+
+---
+
+### 🔐 Ansible Vault — Secret Management
+
+To secure sensitive credentials, Ansible Vault is used to encrypt the WordPress database password.
+
+Encrypted secrets are stored in:
+
+group_vars/all/vault.yml
+
+
+Example encrypted variable:
+
+- `wp_db_password`
+
+The Vault file is loaded explicitly inside the main playbook `site.yml` using:
+
+```yaml
+vars_files:
+  - ../group_vars/all/vault.yml
+
